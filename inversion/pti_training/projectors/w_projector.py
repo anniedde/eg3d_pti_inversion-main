@@ -108,6 +108,8 @@ def project_plus(
     w_avg = np.mean(w_samples, axis=0, keepdims=True)  # [1, 1, C]
     w_std = (np.sum((w_samples - w_avg) ** 2) / w_avg_samples) ** 0.5
 
+    print('dims of initial_w: ', initial_w.size())
+    print("dims of w_avg: ", w_avg.size())
     start_w = initial_w if initial_w is not None else w_avg
     start_w = start_w.repeat(batchsize, 0)
 
@@ -211,7 +213,7 @@ def project(
         *,
         num_steps=1000,
         w_avg_samples=10000,
-        initial_learning_rate=0.025,
+        initial_learning_rate=0.01,
         initial_noise_factor=0.05,
         lr_rampdown_length=0.25,
         lr_rampup_length=0.05,
@@ -276,6 +278,7 @@ def project(
         batchsize = 1
         target_images = target.unsqueeze(0).to(device).to(torch.float32)
 
+    print('batchsize is : ', batchsize)
     real_image = target_images.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
 
     target_images_orig = target_images.clone()
@@ -292,7 +295,12 @@ def project(
     w_samples = w_samples[:, :1, :].cpu().numpy().astype(np.float32)  # [N, 1, C]
     w_avg = np.mean(w_samples, axis=0, keepdims=True)  # [1, 1, C]
     w_std = (np.sum((w_samples - w_avg) ** 2) / w_avg_samples) ** 0.5
-
+    
+    if initial_w is not None:
+        print('dims of initial_w: ', initial_w.size)
+        #print(initial_w)
+        #print(initial_w[0][0])
+    print("dims of w_avg: ", w_avg.size)
     start_w = initial_w if initial_w is not None else w_avg
     start_w = start_w.repeat(batchsize, 0)
 
@@ -306,13 +314,14 @@ def project(
                          requires_grad=True)  # pylint: disable=not-callable
 
     optimizer = torch.optim.Adam([w_opt] + list(noise_bufs.values()), betas=(0.9, 0.999),
-                                 lr=hyperparameters.first_inv_lr)
+                                 lr=0.1)#lr=hyperparameters.first_inv_lr)
 
     # Init noise.
-    for buf in noise_bufs.values():
-        buf[:] = torch.randn_like(buf)
-        buf.requires_grad = True
+    #for buf in noise_bufs.values():
+    #    buf[:] = torch.randn_like(buf)
+    #    buf.requires_grad = True
 
+    
     all_w_opt = []
     num_ws = G.backbone.mapping.num_ws
 
@@ -342,9 +351,12 @@ def project(
         # Synth images from opt_w.
         w_noise = torch.randn_like(w_opt) * w_noise_scale
         ws = (w_opt + w_noise).repeat([1, G.backbone.mapping.num_ws, 1])
+        #print('dim of w_opt: ', w_opt.size())
+        #print('dim of ws: ', ws.size())
         all_w_opt.append(w_opt.detach().repeat([1, num_ws, 1]))
 
-        synth_images_orig = G.synthesis(ws, target_pose, noise_mode='const', force_fp32=True)['image']
+        #synth_images_orig = G.synthesis(ws, target_pose, noise_mode='const', force_fp32=True)['image']
+        synth_images_orig = G.synthesis(ws, target_pose, noise_mode='const')['image']
 
         # Downsample image to 256x256 if it's larger than that. VGG was built for 224x224 images.
         synth_images = (synth_images_orig + 1) * (255 / 2)
@@ -361,25 +373,27 @@ def project(
         else:
             reg_loss = 0.0
 
-        for v in noise_bufs.values():
-            noise = v[None, None, :, :]  # must be [1,1,H,W] for F.avg_pool2d()
-            while True:
-                reg_loss += (noise * torch.roll(noise, shifts=1, dims=3)).mean() ** 2
-                reg_loss += (noise * torch.roll(noise, shifts=1, dims=2)).mean() ** 2
-                if noise.shape[2] <= 8:
-                    break
-                noise = F.avg_pool2d(noise, kernel_size=2)
+        #for v in noise_bufs.values():
+        #    noise = v[None, None, :, :]  # must be [1,1,H,W] for F.avg_pool2d()
+        #    while True:
+        #        reg_loss += (noise * torch.roll(noise, shifts=1, dims=3)).mean() ** 2
+        #        reg_loss += (noise * torch.roll(noise, shifts=1, dims=2)).mean() ** 2
+        #        if noise.shape[2] <= 8:
+        #            break
+        #        noise = F.avg_pool2d(noise, kernel_size=2)
         loss = dist + reg_loss * regularize_noise_weight
 
         if step % 5 == 0:
-            synth_image = (synth_images_orig + 1) * (255/2)
+            #synth_image = (synth_images_orig + 1) * (255/2)
+            synth_image = (synth_images_orig)
 
             if writer is not None:
                 log_utils.tb_log_images(torch.cat((target_images_orig / 255., (synth_images_orig+1)/2), dim=-1),
                                          writer,  step, label='w')
 
             if write_video:
-                synth_image = synth_image.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
+                synth_image = (synth_image.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
+                Image.fromarray(synth_image, 'RGB').save(f'out/trainImage3_step{step}.png')
                 rgb_video.append_data(np.concatenate([real_image, synth_image], axis=1))
             
         # Step
@@ -389,10 +403,10 @@ def project(
         logprint(f'step {step + 1:>4d}/{num_steps}: dist {dist:<4.2f} loss {float(loss):<5.2f}')
 
         # Normalize noise.
-        with torch.no_grad():
-            for buf in noise_bufs.values():
-                buf -= buf.mean()
-                buf *= buf.square().mean().rsqrt()
+        #with torch.no_grad():
+        #    for buf in noise_bufs.values():
+        #        buf -= buf.mean()
+        #        buf *= buf.square().mean().rsqrt()
 
     if write_video:
         rgb_video.close()

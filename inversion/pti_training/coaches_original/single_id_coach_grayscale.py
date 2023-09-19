@@ -8,9 +8,9 @@ from PIL import Image
 import imageio
 import numpy as np
 import pickle
-import shutil
 
-class SingleIDCoach(BaseCoach):
+
+class SingleIDCoachGrayscale(BaseCoach):
 
     def __init__(self, data_loader, use_wandb):
         super().__init__(data_loader, use_wandb)
@@ -23,40 +23,24 @@ class SingleIDCoach(BaseCoach):
 
         use_ball_holder = True
 
-        for idx, (fname, image) in enumerate(tqdm(self.data_loader)):
+        for fname, image in tqdm(self.data_loader):
             image_name = fname[0]
-            print("image name:", image_name)
 
             self.restart_training()
-
-            # ! if self.G contains layers containing lora, freeze them
-            for name, param in self.G.named_parameters():
-                if 'lora' in name:
-                    param.requires_grad = False
 
             if self.image_counter >= hyperparameters.max_images_to_invert:
                 break
 
             embedding_dir = f'{w_path_dir}/{paths_config.pti_results_keyword}/{image_name}'
-            model_name = paths_config.eg3d_ffhq.split('/')[-1]
-            embedding_dir += f'_{model_name}'
-            if os.path.exists(embedding_dir):
-                shutil.rmtree(embedding_dir)
             os.makedirs(embedding_dir, exist_ok=True)
 
             w_pivot = None
 
-            if hyperparameters.use_last_w_pivots and idx > 0:
+            if hyperparameters.use_last_w_pivots:
                 w_pivot = self.load_inversions(w_path_dir, image_name)
             elif not hyperparameters.use_last_w_pivots or w_pivot is None:
-                import time
-                start = time.time()
-                w_init = torch.from_numpy(np.load('/playpen-nas-ssd/awang/data/luchao_preprocessed/2023-03-27-02-04-37_002_latent.npy')).to(global_config.device)
-                w_pivot, noise_bufs, all_w_opt = self.calc_inversions(image, image_name, embedding_dir, 
-                write_video=True) #, initial_w=w_init[0][0].cpu().detach().numpy())
-                end = time.time()
-                print("time to calc inversions:", end - start)
-            
+                w_pivot, noise_bufs, all_w_opt = self.calc_inversions(image, image_name, embedding_dir, grayscale=True)
+
             w_pivot = w_pivot.to(global_config.device)
 
             # Save optimized noise.
@@ -70,64 +54,48 @@ class SingleIDCoach(BaseCoach):
             with open(f'{embedding_dir}/optimized_noise_dict.pickle', 'wb') as handle:
                 pickle.dump(optimized_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-            # save w_opt for gen_videos.py
-            out_path = paths_config.checkpoints_dir
-            # remove file if exists
-            if os.path.exists(f'{out_path}/w_pivot.pkl'):
-                os.remove(f'{out_path}/w_pivot.pkl')
-            with open(f'{out_path}/w_pivot.pkl', 'wb') as handle:
-                pickle.dump(optimized_dict['projected_w'], handle, protocol=pickle.HIGHEST_PROTOCOL)
-
             log_images_counter = 0
             real_images_batch = image.to(global_config.device)
 
-            real_image = 0.5 * (image + 1) * 255
+            min_val = torch.min(image)
+            max_val = torch.max(image)
+            real_image = image.repeat(1, 3, 1, 1)
+            real_image = (real_image - min_val) / (max_val - min_val)
+            real_image = real_image * 255
             real_image = real_image.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
 
-            vid_path = f'{embedding_dir}' + '/' + 'final_rgb_proj.mp4'
+            vid_path = f'{embedding_dir}' + '/' + 'rgb_proj.mp4'
             rgb_video = imageio.get_writer(vid_path, mode='I', fps=10, codec='libx264', bitrate='16M')
-
-            np.random.seed(1989)
-            torch.manual_seed(1989)
-            start = time.time()
             for i in tqdm(range(hyperparameters.max_pti_steps)):
                 generated_images = self.forward(w_pivot)['image']
+                generated_images_grayscale = 0.299 * generated_images[:, 0, :, :] + 0.587 * generated_images[:, 1, :, :] + 0.114 * generated_images[:, 2, :, :]
+                #generated_images_grayscale = color_weights[0] * generated_images[:, 0, :, :] + color_weights[1] * generated_images[:, 1, :, :] + color_weights[2] * generated_images[:, 2, :, :]
+                generated_images_grayscale = generated_images_grayscale.unsqueeze(1)
 
-                loss, _, loss_lpips = self.calc_loss(generated_images, real_images_batch, image_name, self.G, use_ball_holder, w_pivot)
+                loss, _, _ = self.calc_loss(generated_images_grayscale, real_images_batch, image_name, self.G, use_ball_holder, w_pivot)
 
                 self.optimizer.zero_grad()
-                # if loss_lpips <= hyperparameters.LPIPS_value_threshold:
-                #     break
                 loss.backward()
                 self.optimizer.step()
 
                 use_ball_holder = global_config.training_step % hyperparameters.locality_regularization_interval == 0
 
                 if i % 5 == 0:
-                    synth_image = generated_images
+                    synth_image = self.forward(w_pivot)['image']
                     synth_image = (synth_image + 1) * (255/2)
                     synth_image = synth_image.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
                     rgb_video.append_data(np.concatenate([real_image, synth_image], axis=1))
 
                 if i == hyperparameters.max_pti_steps - 1:
-                    synth_image = generated_images
+                    synth_image = self.forward(w_pivot)['image']
                     synth_image = (synth_image + 1) * (255/2)
                     synth_image = synth_image.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
                     Image.fromarray(synth_image, 'RGB').save(f'{embedding_dir}' + '/' + 'final_rgb_proj.png')
 
                 global_config.training_step += 1
                 log_images_counter += 1
-            end = time.time()
-            print("time to update model:", end - start)
+
             self.image_counter += 1
             rgb_video.close()
 
-            # torch.save(self.G, f'{embedding_dir}/model_{image_name}.pt')
-            
-            # save model for gen_videos.py
-            out_path = paths_config.checkpoints_dir
-            # remove file if exists
-            if os.path.exists(f'{out_path}/tuned_G.pt'):
-                os.remove(f'{out_path}/tuned_G.pt')
-            torch.save(self.G.state_dict(), f'{out_path}/tuned_G.pt')
-            
+            torch.save(self.G, f'{embedding_dir}/model_{image_name}.pt')

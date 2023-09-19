@@ -43,8 +43,7 @@ class BaseCoach:
 
         # Initialize networks
         self.G = load_3dgan()
-        #toogle_grad(self.G, True)
-        toogle_grad(self.G, False)
+        toogle_grad(self.G, True)
         self.original_G = load_3dgan()
 
         self.space_regulizer = Space_Regulizer(self.original_G, self.lpips_loss)
