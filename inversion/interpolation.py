@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 import numpy as np
 from itertools import combinations
 from camera_utils import LookAtPoseSampler
@@ -10,7 +11,9 @@ import json
 import dnnlib
 import legacy
 from torchvision.utils import make_grid, save_image
+from torchvision.transforms import CenterCrop
 import imageio
+from utils.reconstruction_utils import networks_dir
 
 def layout_grid(img, grid_w=None, grid_h=1, float_to_uint8=True, chw_to_hwc=True, to_numpy=True):
     batch_size, channels, img_h, img_w = img.shape
@@ -45,7 +48,8 @@ def format_data(t):
     for fileName in image_paths:
         if fileName.endswith('_latent.npy') and 'mirror' not in fileName:
             if (fileName.split('_')[0] == id_name):
-                ws.append(np.load(os.path.join(folder, fileName), allow_pickle=True))
+                name = fileName[:-11]
+                ws.append((name, np.load(os.path.join(folder, fileName), allow_pickle=True)))
             
         if fileName.endswith('.png') and 'mirror' not in fileName:
             if (fileName.split('_')[0] == id_name):
@@ -56,76 +60,111 @@ def format_data(t):
     return id_name, ws, input_features
 
 device=torch.device('cuda')
-network_pkl='/playpen-nas-ssd/awang/eg3d_pti_inversion-main/inversion/utils/trained_luchao_50_images_no_lora.pkl'
 
-argParser = argparse.ArgumentParser()
-argParser.add_argument("-t", "--time", help="time")
+parser = argparse.ArgumentParser()
+parser.add_argument("--gpu", help="which GPU to use")
+parser.add_argument("-t", "--time", help="time")
+parser.add_argument('-b', '--bound') # either upper or lower
+parser.add_argument('-l', '--lora',
+                    action='store_true') # on/off flag 
 
-args = argParser.parse_args()
+args = parser.parse_args()
+os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
+
+# get correct model
+if args.bound == 'upper':
+    if args.lora:
+        model_name = 'upper_bound_lora'
+    else:
+        model_name = 'upper_bound_no_lora'
+else:
+    if args.lora:
+        model_name = 'lower_bound_lora'
+    else:
+        model_name = 'lower_bound_no_lora'    
+network_pkl = networks_dir + model_name + '.pkl'
+
 t = (int)(args.time)
 
-# Render video.
-video_out = imageio.get_writer('out/t2_rotation.mp4', mode='I', fps=60, codec='libx264')
-
-results = {}
+result = 0
 pitch_range = 0.25
 yaw_range = 0.35
+num_rotations = 60
+num_ticks = 10
 id_model = '/playpen-nas-ssd/luchao/projects/mystyle/pretrained/model_ir_se50.pth'
 person_identifier = id_utils.PersonIdentifier(id_model, None, None)
+transform = CenterCrop([528, 5152])
 
 #for t in range(5):
 with torch.no_grad():
     # get all training samples and their corresponding ws
-    id_name, ws, input_features = format_data(t)
-    out_dir = '/playpen-nas-ssd/awang/eg3d_pti_inversion-main/inversion/out/' + id_name + '_interpolations'
+    _, ws, input_features = format_data(t)
+    out_dir_root = 'out/' + model_name + '_interpolations'
+    if not (os.path.isdir(out_dir_root)):
+        os.mkdir(out_dir_root)
+    out_dir = os.path.join(out_dir_root, f't{t}')
     if not (os.path.isdir(out_dir)):
+        os.mkdir(out_dir)
+    else:
+        shutil.rmtree(out_dir, ignore_errors=True)
         os.mkdir(out_dir)
 
     with dnnlib.util.open_url(network_pkl) as f:
         G = legacy.load_network_pkl(f)['G_ema'].eval().to(device) # type: ignore
 
     pairs = combinations(ws, 2)
-    error_list = []
-    for pair in pairs:
-        w1, w2 = pair[0], pair[1]
-        id_errors, interpolated_images = [], []
+    final_sim_list = []
+    for k, pair in enumerate(pairs):
+        print(f'interpolating pair {k}')
+        w1, w2, name1, name2 = pair[0][1], pair[1][1], pair[0][0], pair[1][0]
 
-        for alpha in np.linspace(0, 1, 1):
-            w = alpha * w1 + (1 - alpha) * w2
-            sim_list = []
+        sim_list = [0 for _ in range(num_ticks)]
+        video_out = imageio.get_writer(f'{out_dir}/{k}--{name1}--{name2}.mp4', mode='I', fps=60, codec='libx264')
+        for idx in range(num_rotations):
+            camera_lookat_point = torch.tensor([0, 0, 0], device=device)
+            cam2world_pose = LookAtPoseSampler.sample(3.14/2 + yaw_range * np.sin(2 * 3.14 * idx / num_rotations),
+                                                    3.14/2 -0.05 + pitch_range * np.cos(2 * 3.14 * idx / num_rotations),
+                                                    camera_lookat_point, radius=2.7, device=device)
+            intrinsics = torch.tensor([[4.2647, 0, 0.5], [0, 4.2647, 0.5], [0, 0, 1]], device=device)
+            c = torch.cat([cam2world_pose.reshape(-1, 16), intrinsics.reshape(-1, 9)], 1).type(torch.float32) # (1, 25)
             imgs = []
-            num_rotations = 120
-            for idx in range(num_rotations):
-                camera_lookat_point = torch.tensor([0, 0, 0], device=device)
-                cam2world_pose = LookAtPoseSampler.sample(3.14/2 + yaw_range * np.sin(2 * 3.14 * idx / num_rotations),
-                                                        3.14/2 -0.05 + pitch_range * np.cos(2 * 3.14 * idx / num_rotations),
-                                                        camera_lookat_point, radius=2.7, device=device)
-                intrinsics = torch.tensor([[4.2647, 0, 0.5], [0, 4.2647, 0.5], [0, 0, 1]], device=device)
-                c = torch.cat([cam2world_pose.reshape(-1, 16), intrinsics.reshape(-1, 9)], 1).type(torch.float32) # (1, 25)
+            
+            for i, alpha in enumerate(np.linspace(0, 1, num_ticks)):
+                w = alpha * w1 + (1 - alpha) * w2
                 img = G.synthesis(ws=torch.from_numpy(w).to(device), c=c[0:1].to(device), noise_mode='const')['image'][0]
-                
                 img = (img * 127.5 + 128).clamp(0, 255).cpu()
                 permuted = np.array(img.permute(1, 2, 0).to(torch.uint8).cpu())
                 feature = person_identifier.get_feature(permuted)
-                sims = [person_identifier.compute_similarity(feature, v) for v in input_features]
+                sim = max([person_identifier.compute_similarity(feature, v) for v in input_features]).item()
+                sim_list[i] += sim
                 
-                sim_list.append(max(sims).item())
-                video_out.append_data(permuted)
                 imgs.append(img)
-            max_sim = np.mean(sim_list) # make mean
-            # id score is 1-complement of the distance
-            id_errors.append(1-max_sim)
 
-            grid = make_grid(imgs, nrow=10, normalize=True)
-            save_image(grid, out_dir + "/grid-rotation-alpha{}.jpg".format(alpha))
+            grid = transform(make_grid(imgs, nrow=10, normalize=True))
+            #grid = (grid * 127.5 + 128).clamp(0, 255).cpu()
+            #grid = np.array(grid.permute(1, 2, 0).to(torch.uint8).cpu())
+            grid = grid.permute(1, 2, 0).cpu().numpy()
+            
+            video_out.append_data(grid)
 
-        id_error_mean = round(np.mean(id_errors), 3)
-        error_list.append(id_error_mean)
-        break
+        sim_list = [s / num_rotations for s in sim_list]
+        sim_mean = round(np.mean(sim_list), 3)
+        final_sim_list.append(sim_mean)
+        video_out.close()
 
-    results[t] = np.mean(error_list)
-    video_out.close()
+    result = np.mean(final_sim_list)
+    print(f'mean ID similarity for time {t} is {result}')
+    
+interpolation_location = 'out/interpolation_output.json'
+if not os.path.isfile(interpolation_location):
+    output = {'upper_bound_no_lora': [0 for _ in range(5)],
+              'upper_bound_lora': [0 for _ in range(5)],
+              'lower_bound_no_lora': [0 for _ in range(5)],
+              'lower_bound_lora': [0 for _ in range(5)]}
+else:
+    with open(interpolation_location) as feedsjson:
+        output = json.load(feedsjson)
 
-with open('interpolation.json'.format(t), 'w') as f:
-    json.dump(results, f)
-        
+output[model_name][t] = result
+with open(interpolation_location, 'w') as f:
+    json.dump(output, f)

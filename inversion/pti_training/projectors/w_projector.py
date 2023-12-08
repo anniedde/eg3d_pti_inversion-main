@@ -210,6 +210,8 @@ def project(
         G,
         target: torch.Tensor,  # [C,H,W] and dynamic range [0,255], W & H must match G output resolution
         embedding_dir,
+        input_pose_path,
+        input_id,
         *,
         num_steps=1000,
         w_avg_samples=10000,
@@ -241,9 +243,9 @@ def project(
     else:
         assert target.shape == (G.img_channels, G.img_resolution, G.img_resolution), \
             'only batch size==1  supported'
-        if os.path.basename(paths_config.input_pose_path).split(".")[1] == "json":
-            f = open(paths_config.input_pose_path)
-            target_pose = np.asarray(json.load(f)[paths_config.input_id]['pose']).astype(np.float32)
+        if os.path.basename(input_pose_path).split(".")[1] == "json":
+            f = open(input_pose_path)
+            target_pose = np.asarray(json.load(f)[input_id]['pose']).astype(np.float32)
             f.close()
             o = target_pose[0:3, 3]
             print("norm of origin before normalization:", np.linalg.norm(o))
@@ -251,7 +253,7 @@ def project(
             target_pose[0:3, 3] = o
             target_pose = np.reshape(target_pose, -1)  
         else:
-            target_pose = np.load(paths_config.input_pose_path).astype(np.float32)
+            target_pose = np.load(input_pose_path).astype(np.float32)
             target_pose = np.reshape(target_pose, -1)  
 
     intrinsics = np.asarray([4.2647, 0.0, 0.5, 0.0, 4.2647, 0.5, 0.0, 0.0, 1.0]).astype(np.float32)
@@ -278,7 +280,7 @@ def project(
         batchsize = 1
         target_images = target.unsqueeze(0).to(device).to(torch.float32)
 
-    print('batchsize is : ', batchsize)
+    #print('batchsize is : ', batchsize)
     real_image = target_images.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
 
     target_images_orig = target_images.clone()
@@ -294,13 +296,9 @@ def project(
     w_samples = G.mapping(torch.from_numpy(z_samples).to(device), target_pose.repeat(w_avg_samples, 1))  # [N, L, C]
     w_samples = w_samples[:, :1, :].cpu().numpy().astype(np.float32)  # [N, 1, C]
     w_avg = np.mean(w_samples, axis=0, keepdims=True)  # [1, 1, C]
+    #print('w_avg size: ', w_avg)
     w_std = (np.sum((w_samples - w_avg) ** 2) / w_avg_samples) ** 0.5
-    
-    if initial_w is not None:
-        print('dims of initial_w: ', initial_w.size)
-        #print(initial_w)
-        #print(initial_w[0][0])
-    print("dims of w_avg: ", w_avg.size)
+
     start_w = initial_w if initial_w is not None else w_avg
     start_w = start_w.repeat(batchsize, 0)
 
@@ -329,11 +327,13 @@ def project(
         vid_path = f'{embedding_dir}' + '/' + 'w_rgb_proj.mp4'
         rgb_video = imageio.get_writer(vid_path, mode='I', fps=10, codec='libx264', bitrate='16M')
 
+    synth_image = None
     for step in tqdm(range(num_steps)):
 
         # Learning rate schedule.
         t = step / num_steps
         w_noise_scale = w_std * initial_noise_factor * max(0.0, 1.0 - t / noise_ramp_length) ** 2
+        w_noise_scale = 0
 
         lr_ramp = min(1.0, (1.0 - t) / lr_rampdown_length)
         lr_ramp = 0.5 - 0.5 * np.cos(lr_ramp * np.pi)
@@ -350,13 +350,11 @@ def project(
 
         # Synth images from opt_w.
         w_noise = torch.randn_like(w_opt) * w_noise_scale
-        ws = (w_opt + w_noise).repeat([1, G.backbone.mapping.num_ws, 1])
-        #print('dim of w_opt: ', w_opt.size())
-        #print('dim of ws: ', ws.size())
+        #ws = (w_opt + w_noise).repeat([1, G.backbone.mapping.num_ws, 1])
+        ws = (w_opt).repeat([1, G.backbone.mapping.num_ws, 1])
         all_w_opt.append(w_opt.detach().repeat([1, num_ws, 1]))
 
-        #synth_images_orig = G.synthesis(ws, target_pose, noise_mode='const', force_fp32=True)['image']
-        synth_images_orig = G.synthesis(ws, target_pose, noise_mode='const')['image']
+        synth_images_orig = G.synthesis(ws, target_pose, noise_mode='const', force_fp32=True)['image']
 
         # Downsample image to 256x256 if it's larger than that. VGG was built for 224x224 images.
         synth_images = (synth_images_orig + 1) * (255 / 2)
@@ -393,7 +391,6 @@ def project(
 
             if write_video:
                 synth_image = (synth_image.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
-                Image.fromarray(synth_image, 'RGB').save(f'out/trainImage3_step{step}.png')
                 rgb_video.append_data(np.concatenate([real_image, synth_image], axis=1))
             
         # Step
@@ -407,11 +404,14 @@ def project(
         #    for buf in noise_bufs.values():
         #        buf -= buf.mean()
         #        buf *= buf.square().mean().rsqrt()
+    Image.fromarray(synth_image, 'RGB').save(f'{embedding_dir}' + '/' + 'before_pti_rgb_proj.png')
+    #Image.fromarray(synth_image, 'RGB').save(f'{embedding_dir}' + '/' + f'{input_id}_no_lora.png')
 
     if write_video:
         rgb_video.close()
     all_w_opt = torch.cat(all_w_opt, 0)
     del G
+    torch.save(w_opt.repeat([1, num_ws, 1]), '/playpen-nas-ssd/awang/semantic_editing/fml.pt')
     return w_opt.repeat([1, num_ws, 1]), noise_bufs, all_w_opt
 
 

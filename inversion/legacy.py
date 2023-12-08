@@ -20,6 +20,7 @@ from torch_utils import misc
 #----------------------------------------------------------------------------
 
 def load_network_pkl(f, force_fp16=False):
+    print('load_network_pkl')
     data = _LegacyUnpickler(f).load()
 
     # Legacy TensorFlow pickle => convert.

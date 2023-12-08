@@ -23,12 +23,15 @@ def dfs_freeze(model):
         dfs_freeze(child)
 
 class BaseCoach:
-    def __init__(self, data_loader, use_wandb):
+    def __init__(self, data_loader, use_wandb, input_pose_path, input_id, network_path):
 
         self.use_wandb = use_wandb
         self.data_loader = data_loader
         self.w_pivots = {}
         self.image_counter = 0
+        self.input_pose_path = input_pose_path
+        self.input_id = input_id
+        self.network_path = network_path
 
         # Initialize loss
         self.lpips_loss = LPIPS(net=hyperparameters.lpips_type).to(global_config.device).eval()
@@ -42,10 +45,9 @@ class BaseCoach:
     def restart_training(self):
 
         # Initialize networks
-        self.G = load_3dgan()
-        #toogle_grad(self.G, True)
-        toogle_grad(self.G, False)
-        self.original_G = load_3dgan()
+        self.G = load_3dgan(self.network_path)
+        toogle_grad(self.G, True)
+        self.original_G = load_3dgan(self.network_path)
 
         self.space_regulizer = Space_Regulizer(self.original_G, self.lpips_loss)
         self.optimizer = self.configure_optimizers()
@@ -97,6 +99,8 @@ class BaseCoach:
                         use_wandb=self.use_wandb)
             else:
                 w = w_projector.project(self.G, id_image, embedding_dir,
+                                        self.input_pose_path,
+                                        self.input_id,
                                         device=torch.device(global_config.device), w_avg_samples=600,
                                         num_steps=num_steps, w_name=image_name,
                                         use_wandb=self.use_wandb, mask=mask, initial_w=initial_w,
@@ -147,16 +151,16 @@ class BaseCoach:
         return loss, l2_loss_val, loss_lpips
 
     def forward(self, w):
-        if os.path.basename(paths_config.input_pose_path).split(".")[1] == "json":
-            f = open(paths_config.input_pose_path)
-            target_pose = np.asarray(json.load(f)[paths_config.input_id]['pose']).astype(np.float32)
+        if os.path.basename(self.input_pose_path).split(".")[1] == "json":
+            f = open(self.input_pose_path)
+            target_pose = np.asarray(json.load(f)[self.input_id]['pose']).astype(np.float32)
             f.close()
             o = target_pose[0:3, 3]
             o = 2.7 * o / np.linalg.norm(o)
             target_pose[0:3, 3] = o
             target_pose = np.reshape(target_pose, -1)    
         else:
-            target_pose = np.load(paths_config.input_pose_path).astype(np.float32)
+            target_pose = np.load(self.input_pose_path).astype(np.float32)
             target_pose = np.reshape(target_pose, -1)
 
         intrinsics = np.asarray([4.2647, 0.0, 0.5, 0.0, 4.2647, 0.5, 0.0, 0.0, 1.0]).astype(np.float32)
