@@ -1,5 +1,5 @@
 ## Pretrained models paths
-eg3d_ffhq = '/playpen-nas-ssd/awang/eg3d_pti_inversion-main/inversion/utils/trained_luchao_10_images_no_lora.pkl'
+eg3d_ffhq = 'networks/orange_cat/pretrained.pkl'
 dlib = '/playpen-nas-ssd/awang/eg3d_pti_inversion-main/inversion/utils/align.dat'
 
 ## Dirs for output files
@@ -10,13 +10,13 @@ logdir = './logs'
 
 ## Input info
 # Location of the cameras json file
-input_pose_path = '/playpen-nas-ssd/awang/data/luchao_test_2/epoch_20_000000/cameras.json'
+input_pose_path = '/playpen-nas-ssd/awang/data/luchao_test_minus_subset/epoch_20_000000/cameras.json'
 # The image tag to lookup in the cameras json file
-input_id = '2023-03-27-02-04-37_021'
+input_id = 'IMG_7716'
 # Where the input image resides
-input_data_path = '/playpen-nas-ssd/awang/data/luchao_test_2/crop_1024'
+input_data_path = '/playpen-nas-ssd/awang/data/orange_cat_test'
 # Where the outputs are saved (i.e. embeddings/{input_data_id})
-input_data_id = 'luchao_test_14_trained_10_images_no_lora_test_image_2_additional_code_change'
+embedding_folder = 'luchao_subset/no_lora'
 
 ## Keywords
 pti_results_keyword = 'PTI'

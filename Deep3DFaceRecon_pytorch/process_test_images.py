@@ -40,5 +40,7 @@ subprocess.run([cmd], shell=True)
 print("Processing final crops...")
 cmd = "python final_crop.py"
 input_flag = " --in_root " + os.path.join(args.input_dir, "crop_1024")
+input_flag_2 = " --in_root_2 " + os.path.join(args.input_dir)
 cmd += input_flag
+cmd += input_flag_2
 subprocess.run([cmd], shell=True)

@@ -7,10 +7,12 @@ import glob
 from PIL import Image
 parser = argparse.ArgumentParser()
 parser.add_argument('--in_root', type=str, default="", help='process folder')
+parser.add_argument('--in_root_2', type=str, default="", help='root folder')
 parser.add_argument('--center_crop_size', type=int, default=700)
 parser.add_argument('--output_size', type=int, default=512)
 args = parser.parse_args()
 in_root = args.in_root
+in_root_2 = args.in_root_2
 
 images = glob.glob(os.path.join(in_root, "*"))
 
@@ -23,3 +25,6 @@ for img in images:
     im_cropped = im.crop((left, upper, right,lower))
     im_cropped = im_cropped.resize((args.output_size, args.output_size), resample=Image.LANCZOS)
     im_cropped.save(os.path.join(in_root, os.path.basename(img)))
+    im_name = os.path.basename(img).split('.')[0]
+    os.mkdir(os.path.join(in_root_2, im_name))
+    im_cropped.save(os.path.join(in_root_2, im_name, os.path.basename(img)))
