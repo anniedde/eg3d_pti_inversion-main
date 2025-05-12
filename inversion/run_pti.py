@@ -10,6 +10,7 @@ from torchvision.transforms import transforms
 import os
 from configs import global_config, paths_config, hyperparameters
 import shutil
+import traceback
 
 from pti_training.coaches.single_id_coach import SingleIDCoach
 from pti_training.coaches.single_id_coach_grayscale import SingleIDCoachGrayscale
@@ -28,11 +29,38 @@ def run_PTI_func(input_id, input_pose_path, input_data_path, embedding_folder, e
         transforms.ToTensor(),
         transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
         transforms.ToTensor()]))
+    try:
+        dataloader = DataLoader(dataset, batch_size=hyperparameters.batch_size, shuffle=False)
+        coach = SingleIDCoach(dataloader, False, input_pose_path, input_id, eg3d_ffhq, embedding_folder)
+    
+        coach.train()
+    except Exception as e:
+        print('error: ', e)
+        traceback.print_exc()
+        exit()
+    return global_config.run_name
 
-    dataloader = DataLoader(dataset, batch_size=hyperparameters.batch_size, shuffle=False)
-    coach = SingleIDCoach(dataloader, False, input_pose_path, input_id, eg3d_ffhq, embedding_folder)
+def run_PTI_func_image(input_id, input_pose_path, input_data_path, embedding_folder, eg3d_ffhq, rank):
+    #parse_args()
+    #os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+    # os.environ['CUDA_VISIBLE_DEVICES'] = global_config.cuda_visible_devices
 
-    coach.train()
+    global_config.run_name = ''.join(choice(ascii_uppercase) for i in range(12))
+    global_config.pivotal_training_steps = 1
+    global_config.training_step = 1
+    dataset = ImagesDataset(input_data_path, transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+        transforms.ToTensor()]))
+    try:
+        dataloader = DataLoader(dataset, batch_size=hyperparameters.batch_size, shuffle=False, )
+        coach = SingleIDCoach(dataloader, False, input_pose_path, input_id, eg3d_ffhq, embedding_folder)
+    
+        coach.train()
+    except Exception as e:
+        print('error: ', e)
+        traceback.print_exc()
+        exit()
     return global_config.run_name
 """
 def run_PTI(run_name='', use_wandb=False):

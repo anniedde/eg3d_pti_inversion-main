@@ -26,7 +26,12 @@ def evaluate_metrics(folder, pti, lpips, dists, person_identifier, device=torch.
     lpips_loss_list, psnr_list, dists_loss_list, id_error_list = [], [], [], []
     
     for id_name in os.listdir(folder):
-        if os.path.isdir(os.path.join(folder, id_name)) and os.path.exists(os.path.join(folder, id_name, 'final_rgb_proj.png')):
+        if os.path.isdir(os.path.join(folder, id_name)):
+            if pti and not os.path.exists(os.path.join(folder, id_name, 'final_rgb_proj.png')):
+                continue
+            if not pti and not os.path.exists(os.path.join(folder, id_name, 'before_pti_rgb_proj.png')):
+                continue
+
             if pti:
                 output_img = PIL.Image.open(os.path.join(folder, id_name, 'final_rgb_proj.png')).convert('RGB') # [512, 512, 3] [H, W, C]
             else:

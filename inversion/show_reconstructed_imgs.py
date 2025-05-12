@@ -21,15 +21,15 @@ args = parser.parse_args()
 
 if args.gpu:
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-models_list = ['upper_bound_no_lora', 'upper_bound_lora', 'lower_bound_no_lora_alternate', 'lower_bound_lora_alternate']
+models_list = ['lower_bound', 't0_upper_bound', 't0_t1_upper_bound', 'rank_expansion', 'replay_regular_lora_expansion', 'lora_svd_rank1_1step', 'replay_lora_svd_rank1']
 out_dir = 'out/reconstructions'
 
 transform = transforms.Compose([
                     transforms.ToTensor()
                 ])
 t = args.t
-folder = '/playpen-nas-ssd/awang/data/luchao_test_50_images/t{}'.format(t)
-dataset_json = os.path.join(folder, 'epoch_20_000000', 'cameras.json')
+folder = '/playpen-nas-ssd/awang/data/Margot_1step/0/test/preprocessed'
+dataset_json = os.path.join(folder, 'cameras.json')
 image_paths = os.listdir(folder)
 
 if args.pti:
@@ -39,7 +39,7 @@ else:
 entire_time_list = [None for _ in range(50)]
 img_count = 0
 for fileName in image_paths:
-    if fileName.endswith('.png'):
+    if fileName.endswith('.png') and 'mirror' not in fileName:
         id_name = fileName.split('.')[0]
         image_folder = os.path.join(folder, id_name)
         input_loc = os.path.join(image_folder, fileName)
@@ -49,12 +49,13 @@ for fileName in image_paths:
         entire_time_list[img_count] = input_image
         for i, model_name in enumerate(models_list):
             if args.pti:
-                img_loc = os.path.join('embeddings', model_name, f't{t}', id_name, 'final_rgb_proj.png')
+                img_loc = os.path.join('embeddings', 'Margot_1step', model_name, f'{t}', id_name, 'final_rgb_proj.png')
             else:
-                img_loc = os.path.join('embeddings', model_name, f't{t}', id_name, 'before_pti_rgb_proj.png')
+                img_loc = os.path.join('embeddings', 'Margot_1step', model_name, f'{t}', id_name, 'before_pti_rgb_proj.png')
             img = transform(PIL.Image.open(img_loc).convert('RGB'))
             imgs.append(img)
-            entire_time_list[(i + 1) * 10 + img_count] = img
+            print(f'i: {i}, img_count: {img_count}, (i + 1) * 10 + img_count: {(i + 1) * 10 + img_count}')
+            #entire_time_list[(i + 1) * 2 + img_count] = img
         grid = make_grid(imgs, normalize=True)
 
         # save grid
@@ -64,5 +65,5 @@ for fileName in image_paths:
         save_image(grid, out_loc)
         img_count += 1
 
-entire_time_grid = make_grid(entire_time_list, nrow=10, normalize=True)
-save_image(entire_time_grid, os.path.join(out_dir, 'grid.png'))
+#entire_time_grid = make_grid(entire_time_list, nrow=5, normalize=True)
+#save_image(entire_time_grid, os.path.join(out_dir, 'grid.png'))

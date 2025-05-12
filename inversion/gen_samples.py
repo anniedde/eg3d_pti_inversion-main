@@ -178,7 +178,7 @@ def generate_images(
         #    optimized_noise_dict = pickle.load(f)
         #ws = torch.from_numpy(optimized_noise_dict['projected_w']).to(device)
         ws = torch.load(w_loc).to(device)
-        """
+        
         for angle_y, angle_p in [(.4, angle_p), (0, angle_p), (-.4, angle_p)]:
             cam_pivot = torch.tensor(G.rendering_kwargs.get('avg_camera_pivot', [0, 0, 0]), device=device)
             cam_radius = G.rendering_kwargs.get('avg_camera_radius', 2.7)
@@ -202,7 +202,7 @@ def generate_images(
         img = torch.cat(imgs, dim=2)
 
         PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/{img_name}.png')
-        """
+        
 
         if shapes:
             # extract a shape.mrc with marching cubes. You can view the .mrc file using ChimeraX from UCSF.

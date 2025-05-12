@@ -37,6 +37,7 @@ def load_3dgan():
     return old_G
 
 def load_3dgan(path):
+    torch.cuda.empty_cache()
     with dnnlib.util.open_url(path) as fp:
         old_G = legacy.load_network_pkl(fp)['G_ema'].to(torch.device('cuda')).eval()
         old_G = old_G.float()

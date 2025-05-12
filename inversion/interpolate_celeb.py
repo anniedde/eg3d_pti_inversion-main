@@ -58,6 +58,7 @@ def interpolate_subprocess(queue, pairs, celeb, year):
         reference_set_features[img_path] = person_identifier.get_feature(img)\
 
     for model_name in ['upper_bound', 'lower_bound']:
+    #for model_name in ['lora_expansion', 'lora_expansion_baseline']:
         network_pkl = os.path.join('networks', celeb, model_name + '.pkl')
         with dnnlib.util.open_url(network_pkl) as f:
             model = legacy.load_network_pkl(f)['G_ema'].to(device)
@@ -115,18 +116,25 @@ def interpolate_subprocess(queue, pairs, celeb, year):
         
         
 def interpolate_each_time(celeb, year):
-    multiprocessing.set_start_method('spawn')
-    
+    # check to see if interpolation is already done
+    for model_name in ['lower_bound', 'upper_bound']:
+    #for model_name in ['lora_expansion', 'lora_expansion_baseline']:
+        result_save_path = os.path.join('interpolated', celeb, year, model_name, 'mean_id_error.json')
+        if os.path.exists(result_save_path):
+            print(f'Interpolation for {celeb} {year} {model_name} already done. Skipping.')
+            return
+
     latent_codes_dir = os.path.join('/playpen-nas-ssd/awang/data', celeb, year, 'train', 'preprocessed')
     latent_codes_locs = [os.path.join(latent_codes_dir, x) for x in os.listdir(latent_codes_dir) if 'latent' in x and 'mirror' not in x]
     combinations = list(itertools.combinations(latent_codes_locs, 2))
     shuffle(combinations)
-    pairs = combinations[:20]
+    pairs = combinations[:10]
 
-    num_processes = 3
+    num_processes = 1
     chunk_length = len(pairs) // num_processes
     # split pairs into chunks of length chunk_length
     chunks = [pairs[i:i+chunk_length] for i in range(0, len(pairs), chunk_length)]
+    print('chunks:', chunks)
 
     q = Queue()
     processes = []
@@ -158,13 +166,11 @@ def interpolate_each_time(celeb, year):
         notify(f'Error in interpolate_each_time: {e}')
     
 def interpolate_using_all_anchors(celeb):
-    multiprocessing.set_start_method('spawn')
-    
     latent_codes_dir = os.path.join('/playpen-nas-ssd/awang/data', celeb, 'all', 'train', 'preprocessed')
     latent_codes_locs = [os.path.join(latent_codes_dir, x) for x in os.listdir(latent_codes_dir) if 'latent' in x and 'mirror' not in x]
     combinations = list(itertools.combinations(latent_codes_locs, 2))
     shuffle(combinations)
-    pairs = combinations[:20]
+    pairs = combinations[:10]
 
     num_processes = 3
     chunk_length = len(pairs) // num_processes
@@ -203,6 +209,7 @@ def interpolate_using_all_anchors(celeb):
 
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method('spawn')
     parser = argparse.ArgumentParser() 
     parser.add_argument('--year', type=str, required=True)
     parser.add_argument('--celeb', type=str, required=True)

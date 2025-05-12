@@ -8,7 +8,7 @@ from criteria.localitly_regulizer import Space_Regulizer
 import torch
 from torchvision import transforms
 from lpips import LPIPS
-from pti_training.projectors import w_projector, w_projector_grayscale
+from pti_training.projectors import w_projector, w_projector_grayscale, w_plus_projector
 from configs import global_config, paths_config, hyperparameters
 from criteria import l2_loss
 from utils.log_utils import log_image_from_w
@@ -47,9 +47,8 @@ class BaseCoach:
         # Initialize networks
         self.G = load_3dgan(self.network_path)
         toogle_grad(self.G, True)
-        self.original_G = load_3dgan(self.network_path)
-
-        self.space_regulizer = Space_Regulizer(self.original_G, self.lpips_loss)
+        self.original_G = None #load_3dgan(self.network_path)
+        self.space_regulizer = None #Space_Regulizer(self.original_G, self.lpips_loss)
         self.optimizer = self.configure_optimizers()
 
     def get_inversion(self, w_path_dir, image_name, image):
@@ -98,7 +97,7 @@ class BaseCoach:
                         num_steps=hyperparameters.first_inv_steps, w_name=image_name,
                         use_wandb=self.use_wandb)
             else:
-                w = w_projector.project(self.G, id_image, embedding_dir,
+                w = w_plus_projector.project(self.G, id_image, embedding_dir,
                                         self.input_pose_path,
                                         self.input_id,
                                         device=torch.device(global_config.device), w_avg_samples=600,

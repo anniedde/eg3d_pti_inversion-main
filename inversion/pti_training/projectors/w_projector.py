@@ -412,7 +412,7 @@ def project(
     all_w_opt = torch.cat(all_w_opt, 0)
     del G
     torch.save(w_opt.repeat([1, num_ws, 1]), '/playpen-nas-ssd/awang/semantic_editing/fml.pt')
-    return w_opt.repeat([1, num_ws, 1]), noise_bufs, all_w_opt
+    return w_opt.repeat([1, num_ws, 1])
 
 
 def project2d(
@@ -580,4 +580,4 @@ def project2d(
         rgb_video.close()
     all_w_opt = torch.cat(all_w_opt, 0)
     del G
-    return w_opt.repeat([1, num_ws, 1]), noise_bufs, all_w_opt
+    return w_opt.repeat([1, num_ws, 1])

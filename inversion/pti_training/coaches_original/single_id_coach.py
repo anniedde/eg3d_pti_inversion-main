@@ -60,7 +60,7 @@ class SingleIDCoach(BaseCoach):
 
             real_image = 0.5 * (image + 1) * 255
             real_image = real_image.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
-
+            """
             vid_path = f'{embedding_dir}' + '/' + 'final_rgb_proj.mp4'
             rgb_video = imageio.get_writer(vid_path, mode='I', fps=10, codec='libx264', bitrate='16M')
 
@@ -96,3 +96,4 @@ class SingleIDCoach(BaseCoach):
             rgb_video.close()
 
             torch.save(self.G, f'{embedding_dir}/model_{image_name}.pt')
+            """

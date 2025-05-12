@@ -1,0 +1,12 @@
+The folders are formatted like so:
+-- celeb1
+---- experiment1
+------ model1 (trained up to which video)
+------- time1
+------- time2
+---- experiment2
+------ model1 (trained up to which video)
+------- time1
+------- time2
+-- celeb2
+---- experiment1

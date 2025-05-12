@@ -9,6 +9,21 @@ import imageio
 import numpy as np
 import pickle
 import shutil
+import re
+
+def generate_image(G, dataset_folder, img_name, out_folder, device=torch.device('cuda')):
+    os.makedirs(out_folder, exist_ok=True)
+    w_loc = os.path.join(dataset_folder, f'{img_name}_latent.npy')
+    c_loc = os.path.join(dataset_folder, f'{img_name}.npy')
+
+    # Generate image.
+    ws = torch.from_numpy(np.load(w_loc)).to(device)
+    c = torch.from_numpy(np.load(c_loc).reshape(1,25)).to(device)
+    
+    img = G.synthesis(ws, c, noise_mode='const')['image'].detach().cpu()
+
+    img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
+    Image.fromarray(img, 'RGB').save(f'{out_folder}/{img_name}.png')
 
 class SingleIDCoach(BaseCoach):
 
@@ -28,11 +43,23 @@ class SingleIDCoach(BaseCoach):
 
             self.restart_training()
 
-            # ! if self.G contains layers containing lora, freeze them
-            for name, param in self.G.named_parameters():
-                if 'lora' in name:
-                    param.requires_grad = False
+            # freeze nonlora layers
+            #for name, param in self.G.named_parameters():
+            #    if 'lora' not in name:
+            #        param.requires_grad = False
 
+            # REMOVE LATER - TEMPORARY
+            if False and 'lora_expansion' in self.network_path:
+                rank = int(self.embedding_folder.split('/')[-1]) + 1
+                scaling_factor = 1.0 / rank
+
+                self.G.scaling_factor = torch.nn.Parameter(torch.tensor(scaling_factor))
+                for name, module in self.G.named_modules():
+                    if name.endswith('conv0') or name.endswith('conv1') or name.endswith('torgb') or name.endswith('skip') or name.endswith('affine'):
+                        module.scaling = self.G.scaling_factor
+                        print('scaling factor: ', module.scaling)
+
+            #generate_image(self.G, '/playpen-nas-ssd/awang/data/Margot_up_to_4/0/train/preprocessed', '0', '/playpen-nas-ssd/awang/eg3d_pti_inversion-main/inversion/out/temp')
             if self.image_counter >= hyperparameters.max_images_to_invert:
                 break
 
@@ -50,8 +77,8 @@ class SingleIDCoach(BaseCoach):
                 #initial_w = torch.from_numpy(np.load('/playpen-nas-ssd/awang/data/orange_cat_preprocessed/2_latent.npy')).to(global_config.device)
                 #initial_w = initial_w[0][0].unsqueeze(0).unsqueeze(0)
                 start = time.time()
-                w_pivot, noise_bufs, all_w_opt = self.calc_inversions(image, image_name, embedding_dir, 
-                write_video=True, initial_w=None) 
+                w_pivot = self.calc_inversions(image, image_name, embedding_dir, 
+                write_video=False, initial_w=None) 
                 end = time.time()
                 print("time to calc inversions:", end - start)
             
@@ -84,53 +111,79 @@ class SingleIDCoach(BaseCoach):
 
             real_image = 0.5 * (image + 1) * 255
             real_image = real_image.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
-
+            Image.fromarray(real_image, 'RGB').save(f'{embedding_dir}' + '/' + 'input.png')
+            """
             vid_path = f'{embedding_dir}' + '/' + 'final_rgb_proj.mp4'
             rgb_video = imageio.get_writer(vid_path, mode='I', fps=10, codec='libx264', bitrate='16M')
 
+            # zero out irrelevant lora weights
+            if False and 'lora_expansion' in self.network_path:
+                for name, param in self.G.named_parameters():
+                    rank = int(self.embedding_folder.split('/')[-1]) + 1
+                    if 'lora' in name:
+                        match = re.search(r'rank_index_(\d+)', name)
+                        if match:
+                            index = int(match.group(1))
+                            if index > rank:
+                                param.data = torch.zeros_like(param.data)
+                                print('zeroing weight')
+
+            #generate_image(self.G, '/playpen-nas-ssd/awang/data/Margot_up_to_4/0/train/preprocessed', '0', '/playpen-nas-ssd/awang/eg3d_pti_inversion-main/inversion/out/temp')
+
             np.random.seed(1989)
             torch.manual_seed(1989)
-            start = time.time()
-            for i in tqdm(range(hyperparameters.max_pti_steps)):
-                generated_images = self.forward(w_pivot)['image']
+            try:
+                start = time.time()
+                for i in tqdm(range(hyperparameters.max_pti_steps)):
+                    generated_images = self.forward(w_pivot)['image']
 
-                loss, _, loss_lpips = self.calc_loss(generated_images, real_images_batch, image_name, self.G, use_ball_holder, w_pivot)
+                    loss, _, loss_lpips = self.calc_loss(generated_images, real_images_batch, image_name, self.G, use_ball_holder, w_pivot)
 
-                self.optimizer.zero_grad()
-                # if loss_lpips <= hyperparameters.LPIPS_value_threshold:
-                #     break
-                loss.backward()
-                self.optimizer.step()
+                    self.optimizer.zero_grad()
+                    # if loss_lpips <= hyperparameters.LPIPS_value_threshold:
+                    #     break
+                    loss.backward()
+                    self.optimizer.step()
 
-                use_ball_holder = global_config.training_step % hyperparameters.locality_regularization_interval == 0
+                    use_ball_holder = global_config.training_step % hyperparameters.locality_regularization_interval == 0
 
-                if i % 5 == 0:
-                    synth_image = generated_images
-                    synth_image = (synth_image + 1) * (255/2)
-                    synth_image = synth_image.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
-                    rgb_video.append_data(np.concatenate([real_image, synth_image], axis=1))
+                    if i % 5 == 0:
+                        synth_image = generated_images
+                        synth_image = (synth_image + 1) * (255/2)
+                        synth_image = synth_image.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
+                        rgb_video.append_data(np.concatenate([real_image, synth_image], axis=1))
 
-                if i == hyperparameters.max_pti_steps - 1:
-                    synth_image = generated_images
-                    synth_image = (synth_image + 1) * (255/2)
-                    synth_image = synth_image.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
-                    Image.fromarray(synth_image, 'RGB').save(f'{embedding_dir}' + '/' + 'final_rgb_proj.png')
-                    Image.fromarray(real_image, 'RGB').save(f'{embedding_dir}' + '/' + 'input.png')
+                    if i == hyperparameters.max_pti_steps - 1:
+                        synth_image = generated_images
+                        synth_image = (synth_image + 1) * (255/2)
+                        synth_image = synth_image.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
+                        Image.fromarray(synth_image, 'RGB').save(f'{embedding_dir}' + '/' + 'final_rgb_proj.png')
 
-                global_config.training_step += 1
-                log_images_counter += 1
-            end = time.time()
-            print("time to update model:", end - start)
-            self.image_counter += 1
-            rgb_video.close()
+                    global_config.training_step += 1
+                    log_images_counter += 1
+                end = time.time()
+                print("time to update model:", end - start)
+                self.image_counter += 1
+                rgb_video.close()
 
-            # torch.save(self.G, f'{embedding_dir}/model_{image_name}.pt')
-            
-            # save model for gen_videos.py
-            torch.save(self.G.state_dict(), f'{embedding_dir}/tuned_G.pt')
-            out_path = paths_config.checkpoints_dir
-            # remove file if exists
-            if os.path.exists(f'{out_path}/tuned_G.pt'):
-                os.remove(f'{out_path}/tuned_G.pt')
-            torch.save(self.G.state_dict(), f'{out_path}/tuned_G.pt')
+                if False and 'lora_expansion' in self.network_path:
+                    for name, module in self.G.named_modules():
+                        if 'conv0' in name or 'conv1' in name or 'torgb' in name or 'skip' in name or 'affine' in name:
+                            module.scaling = self.G.scaling_factor
+                            print('scaling factor for layer ', name, ' is ', module.scaling)
+                    print('scaling factor for G is ', self.G.scaling_factor)
+
+                # torch.save(self.G, f'{embedding_dir}/model_{image_name}.pt')
+                
+                # save model for gen_videos.py
+                torch.save(self.G.state_dict(), f'{embedding_dir}/tuned_G.pt')
+                out_path = paths_config.checkpoints_dir
+                # remove file if exists
+                if os.path.exists(f'{out_path}/tuned_G.pt'):
+                    os.remove(f'{out_path}/tuned_G.pt')
+                torch.save(self.G.state_dict(), f'{out_path}/tuned_G.pt')
+            except Exception as e:
+                print(e)
+                continue
+            """
             
